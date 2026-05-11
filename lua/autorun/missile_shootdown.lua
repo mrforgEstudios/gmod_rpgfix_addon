@@ -33,6 +33,10 @@ local function IsShootableMissile(ent)
     return IsValid(ent) and SHOOTABLE_MISSILES[ent:GetClass()] == true
 end
 
+local function IsValidMissile(missile)
+    return IsValid(missile) and not missile:GetNWBool("MissileShootdown_Detonated", false)
+end
+
 local function DistPointToSegment(point, segA, segB)
     local ab = segB - segA
     local lenSq = ab:LengthSqr()
@@ -115,7 +119,7 @@ local function FindMissileNearSegment(startPos, endPos, shooter)
 
     for className in pairs(SHOOTABLE_MISSILES) do
         for _, missile in ipairs(ents.FindByClass(className)) do
-            if IsValid(missile) and not missile.MissileShootdown_Detonated then
+            if IsValidMissile(missile) then
                 local closest, dist = DistPointToSegment(missile:GetPos(), startPos, endPos)
 
                 if dist <= bestDist and HasLineOfSight(startPos, closest, missile, shooter) then
@@ -131,9 +135,9 @@ local function FindMissileNearSegment(startPos, endPos, shooter)
 end
 
 local function DetonateMissile(missile, attacker, hitPos)
-    if not IsShootableMissile(missile) or missile.MissileShootdown_Detonated then return end
+    if not IsShootableMissile(missile) or missile:GetNWBool("MissileShootdown_Detonated", false) then return end
 
-    missile.MissileShootdown_Detonated = true
+    missile:SetNWBool("MissileShootdown_Detonated", true)
 
     local className = missile:GetClass()
     local pos = hitPos or missile:GetPos()
@@ -143,14 +147,24 @@ local function DetonateMissile(missile, attacker, hitPos)
 
     SendDebugSphere(pos, 10, Color(0, 120, 255), 0.5)
 
+    -- Эффект как у Combine Gunship при сбитии RPG
     local effectdata = EffectData()
     effectdata:SetOrigin(pos)
-    effectdata:SetMagnitude(1)
-    effectdata:SetScale(1)
-    effectdata:SetRadius(16)
-    util.Effect("Explosion", effectdata)
+    util.Effect("RPGShotDown", effectdata)
 
-    missile:Remove()
+    -- Дополнительный shake для атмосферы
+    util.ScreenShake(pos, 8, 8, 0.6, 400)
+
+    -- Explosion эффект как дополнение
+    local ex = EffectData()
+    ex:SetOrigin(pos)
+    ex:SetMagnitude(1)
+    ex:SetScale(1)
+    ex:SetRadius(16)
+    util.Effect("Explosion", ex)
+
+    -- Удаляем после эффектов
+    missile:Fire("Kill")
 
     if radius > 0 and damage > 0 then
         util.BlastDamage(game.GetWorld(), owner, pos, radius, damage)
@@ -160,7 +174,6 @@ local function DetonateMissile(missile, attacker, hitPos)
         for _, ent in ipairs(ents.FindInSphere(pos, radius)) do
             if IsValid(ent) then
                 local phys = ent:GetPhysicsObject()
-
                 if IsValid(phys) then
                     local distance = math.max(ent:GetPos():Distance(pos), 1)
                     local scale = math.Clamp(1 - distance / radius, 0, 1)
@@ -208,7 +221,7 @@ hook.Add("EntityFireBullets", "MissileShootdown_BulletCallback", function(shoote
         end
 
         local missile, hitPos = FindMissileNearSegment(startPos, endPos, realAttacker)
-        if IsShootableMissile(missile) then
+        if IsValidMissile(missile) then
             SendDebugLine(startPos, hitPos, Color(0, 255, 0), 0.25)
             SendDebugSphere(missile:GetPos(), cv_hit_radius:GetFloat(), Color(255, 200, 0), 0.25)
             DetonateMissile(missile, realAttacker, hitPos)
